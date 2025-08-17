@@ -99,45 +99,32 @@ export const useMCPServerStore = create<MCPServerStore>()(persist(
     },
 
     connectServer: async (id, transport = 'sse') => {
-      const { servers, connections } = get();
+      const { servers, connections, setServerStatus } = get();
       const server = servers.find(s => s.id === id);
       if (!server) return false;
 
       try {
-        set((state) => ({
-          servers: state.servers.map((s) =>
-            s.id === id ? { ...s, status: 'connecting' } : s
-          ),
-        }));
+        // Create status callback function
+        const onStatusChange = (status: MCPServer['status']) => {
+          setServerStatus(id, status);
+        };
 
-        // Use the custom streamable HTTP service
-        const service = new StreamableMCPServerService(server, transport);
+        // Use the custom streamable HTTP service with status callback
+        const service = new StreamableMCPServerService(server, onStatusChange);
         const connected = await service.connect();
         
         if (connected) {
           connections.set(id, service);
           set((state) => ({
-            servers: state.servers.map((s) =>
-              s.id === id ? { ...s, status: 'connected' } : s
-            ),
             connections: new Map(connections),
           }));
           return true;
         } else {
-          set((state) => ({
-            servers: state.servers.map((s) =>
-              s.id === id ? { ...s, status: 'error' } : s
-            ),
-          }));
           return false;
         }
       } catch (error) {
         console.error('Failed to connect server:', error);
-        set((state) => ({
-          servers: state.servers.map((s) =>
-            s.id === id ? { ...s, status: 'error' } : s
-          ),
-        }));
+        setServerStatus(id, 'error');
         return false;
       }
     },

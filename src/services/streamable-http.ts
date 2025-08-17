@@ -119,7 +119,7 @@ export class StreamableHTTPConnection extends StreamableHttpConnection {
         mode: 'cors',
         headers: {
           'Content-Type': 'application/json',
-          'Accept': 'application/json',
+          'Accept': 'application/json, text/event-stream, */*',
           ...this.config.headers,
         },
         body: JSON.stringify({
@@ -143,13 +143,11 @@ export class StreamableHTTPConnection extends StreamableHttpConnection {
         }
         
         this.sessionId = response.headers.get('Mcp-Session-Id') || undefined;
-        if (!this.sessionId) {
-          throw new Error('Session ID not found in response headers');
-        }
-
-        const initialMessage: MCPMessage = await response.json();
-        this.handleMessage(initialMessage);
-
+        console.log('Initialize response received, session ID:', this.sessionId);
+        
+        // The initialize response body may be empty, so we don't parse it as JSON.
+        // We just need to check if the response was successful.
+        
         this.isConnected = true;
         resolve();
       })
@@ -176,7 +174,7 @@ export class StreamableHTTPConnection extends StreamableHttpConnection {
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'Accept': 'application/json',
+      'Accept': 'application/json, text/event-stream, */*',
       ...this.config.headers,
     };
 
@@ -357,19 +355,30 @@ export async function testMCPConnection(): Promise<{ sessionId: string | null }>
 export class StreamableMCPServerService {
   private connection: StreamableHttpConnection;
   private server: MCPServer;
+  private onStatusChange?: (status: MCPServer['status']) => void;
 
-  constructor(server: MCPServer) {
+  constructor(server: MCPServer, onStatusChange?: (status: MCPServer['status']) => void) {
     this.server = server;
     this.connection = createStreamableConnection(server);
+    this.onStatusChange = onStatusChange;
   }
 
   async connect(): Promise<boolean> {
     try {
+      // Notify connecting status
+      this.onStatusChange?.('connecting');
+      
       // The connection.connect() method now handles the initialize request
       await this.connection.connect();
+      
+      // Notify connected status
+      this.onStatusChange?.('connected');
       return true;
     } catch (error) {
       console.error('Failed to connect to MCP server:', error);
+      
+      // Notify error status
+      this.onStatusChange?.('error');
       return false;
     }
   }

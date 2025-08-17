@@ -27,8 +27,8 @@ const ServerManagement: React.FC = () => {
     addServer, 
     removeServer, 
     toggleServerActive, 
-    connectServer,
     disconnectServer,
+    connectServer,
     getConnection
   } = useMCPServerStore();
   const { addNotification } = useUIStore();
@@ -88,6 +88,30 @@ const ServerManagement: React.FC = () => {
       title: '已断开连接',
       message: `已断开与 ${server.name} 的连接`,
     });
+  };
+
+  const handleConnectServer = async (server: MCPServer) => {
+    try {
+      addNotification({
+        type: 'info',
+        title: '开始连接',
+        message: `正在连接到 ${server.name}...`,
+      });
+      
+      await connectServer(server.id);
+      
+      addNotification({
+        type: 'success',
+        title: '连接成功',
+        message: `已成功连接到 ${server.name}`,
+      });
+    } catch (error) {
+      addNotification({
+        type: 'error',
+        title: '连接失败',
+        message: `连接到 ${server.name} 失败: ${error instanceof Error ? error.message : '未知错误'}`,
+      });
+    }
   };
 
   const handleTestMCPConnection = async (server: MCPServer) => {
@@ -334,7 +358,7 @@ const ServerManagement: React.FC = () => {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => handleTestMCPConnection(server)}
+                        onClick={() => handleConnectServer(server)}
                         disabled={server.status === 'connecting'}
                       >
                         {server.status === 'connecting' ? (
