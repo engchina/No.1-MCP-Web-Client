@@ -3,18 +3,20 @@ export interface MCPServer {
   id: string;
   name: string;
   url: string;
-  type: 'streamable-http' | 'websocket' | 'stdio';
+  type: 'streamable-http' | 'sse';
   status: 'connected' | 'disconnected' | 'connecting' | 'error';
   description?: string;
   capabilities?: string[];
   lastConnected?: Date;
-  config?: Record<string, any>;
+  config?: {
+    headers?: Record<string, string>;
+  };
 }
 
 export interface MCPServerConfig {
   name: string;
   url: string;
-  type: 'streamable-http' | 'websocket' | 'stdio';
+  type: 'streamable-http' | 'sse';
   headers?: Record<string, string>;
   timeout?: number;
   retryAttempts?: number;

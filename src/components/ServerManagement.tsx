@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { Plus, Server, Trash2, RefreshCw, Globe, Zap, Power, PowerOff, Wifi, Radio } from 'lucide-react';
+import { Plus, Server, Trash2, RefreshCw, Globe, Zap, Power, PowerOff } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/Card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from './ui/Dialog';
 import { useMCPServerStore, useUIStore } from '../stores';
 import { MCPDiscoveryService } from '../services/api';
-import { StreamableTransport } from '../services/streamable-http';
+import { testMCPConnection } from '../services/streamable-http';
 import { MCPServerConfig, MCPServer } from '../types';
 import { cn, isValidUrl } from '../utils';
 
@@ -20,7 +20,6 @@ const ServerManagement: React.FC = () => {
     url: '',
     type: 'streamable-http',
   });
-  const [selectedTransport, setSelectedTransport] = useState<StreamableTransport>('sse');
   
   const { 
     servers, 
@@ -81,23 +80,6 @@ const ServerManagement: React.FC = () => {
     });
   };
 
-  const handleTestConnection = async (server: MCPServer) => {
-    const connected = await connectServer(server.id, selectedTransport);
-    
-    if (connected) {
-      addNotification({
-        type: 'success',
-        title: '连接成功',
-        message: `已成功连接到 ${server.name} (${selectedTransport.toUpperCase()})`,
-      });
-    } else {
-      addNotification({
-        type: 'error',
-        title: '连接失败',
-        message: `无法连接到 ${server.name}`,
-      });
-    }
-  };
 
   const handleDisconnectServer = async (server: MCPServer) => {
     await disconnectServer(server.id);
@@ -106,6 +88,30 @@ const ServerManagement: React.FC = () => {
       title: '已断开连接',
       message: `已断开与 ${server.name} 的连接`,
     });
+  };
+
+  const handleTestMCPConnection = async (server: MCPServer) => {
+    try {
+      addNotification({
+        type: 'info',
+        title: '开始测试',
+        message: `正在测试 ${server.name} 的MCP连接...`,
+      });
+      
+      const result = await testMCPConnection();
+      
+      addNotification({
+        type: 'success',
+        title: '测试完成',
+        message: `MCP连接测试成功完成，会话ID: ${result.sessionId}`,
+      });
+    } catch (error) {
+      addNotification({
+        type: 'error',
+        title: '测试失败',
+        message: `MCP连接测试失败: ${error instanceof Error ? error.message : '未知错误'}`,
+      });
+    }
   };
 
   const handleDiscoverServers = async () => {
@@ -238,39 +244,10 @@ const ServerManagement: React.FC = () => {
                     className="w-full h-10 px-3 py-2 text-sm border border-input bg-background rounded-md"
                   >
                     <option value="streamable-http">Streamable HTTP</option>
-                    <option value="websocket">WebSocket</option>
-                    <option value="stdio">STDIO</option>
                   </select>
                 </div>
-                
-                <div>
-                  <label className="text-sm font-medium">传输协议</label>
-                  <div className="flex space-x-2 mt-2">
-                    <Button
-                      type="button"
-                      variant={selectedTransport === 'sse' ? 'default' : 'outline'}
-                      onClick={() => setSelectedTransport('sse')}
-                      className="flex items-center space-x-2"
-                    >
-                      <Radio className="h-4 w-4" />
-                      <span>SSE</span>
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={selectedTransport === 'websocket' ? 'default' : 'outline'}
-                      onClick={() => setSelectedTransport('websocket')}
-                      className="flex items-center space-x-2"
-                    >
-                      <Wifi className="h-4 w-4" />
-                      <span>WebSocket</span>
-                    </Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {selectedTransport === 'sse' 
-                      ? 'Server-Sent Events - 单向流式通信，适合大多数场景'
-                      : 'WebSocket - 双向实时通信，支持自动重连'}
-                  </p>
-                </div>
+
+                {/* Removed Transfer Protocol section as per requirement */}
               </div>
               
               <DialogFooter>
@@ -357,7 +334,7 @@ const ServerManagement: React.FC = () => {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => handleTestConnection(server)}
+                        onClick={() => handleTestMCPConnection(server)}
                         disabled={server.status === 'connecting'}
                       >
                         {server.status === 'connecting' ? (
@@ -368,6 +345,15 @@ const ServerManagement: React.FC = () => {
                         {server.status === 'connecting' ? '连接中...' : '连接'}
                       </Button>
                     )}
+                    
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleTestMCPConnection(server)}
+                    >
+                      <RefreshCw className="h-4 w-4 mr-1" />
+                      测试MCP
+                    </Button>
                     
                     {server.status === 'connected' && (
                       <div className="flex items-center text-xs text-muted-foreground">

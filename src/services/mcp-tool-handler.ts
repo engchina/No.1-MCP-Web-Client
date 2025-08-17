@@ -1,11 +1,13 @@
 import { useMCPServerStore } from '../stores';
+import { MCPServer } from '../types';
+
 
 export interface MCPToolCall {
   id: string;
   type: 'function';
   function: {
     name: string;
-    arguments: string;
+    arguments: Record<string, any> | string; // 更精确的类型定义
   };
 }
 
@@ -15,9 +17,16 @@ export interface MCPToolResult {
   error?: string;
 }
 
+export type ToolExecutionResult = {
+  toolCallId: string;
+  result: any;
+  error?: string;
+};
+
 // MCP Tool Handler for processing tool calls in chat
 export class MCPToolHandler {
   private static instance: MCPToolHandler;
+
   
   static getInstance(): MCPToolHandler {
     if (!MCPToolHandler.instance) {
@@ -26,101 +35,111 @@ export class MCPToolHandler {
     return MCPToolHandler.instance;
   }
 
-  async getAvailableTools(): Promise<any[]> {
-    const { servers, activeServers, getConnection } = useMCPServerStore.getState();
-    const availableTools: any[] = [];
 
-    const activeMCPServers = servers.filter(server => 
-      activeServers.includes(server.id) && server.status === 'connected'
-    );
 
-    for (const server of activeMCPServers) {
-      const connection = getConnection(server.id);
-      if (connection) {
-        try {
-          const tools = await connection.listTools();
-          availableTools.push(...tools.map(tool => ({
-            ...tool,
-            serverId: server.id,
-            serverName: server.name,
-            // Convert to OpenAI function format
-            type: 'function',
-            function: {
-              name: `${server.name}_${tool.name}`,
-              description: tool.description,
-              parameters: tool.inputSchema || {
-                type: 'object',
-                properties: {},
-              },
-            },
-          })));
-        } catch (error) {
-          console.warn(`Failed to get tools from ${server.name}:`, error);
+  async getAvailableTools(): Promise<Array<{
+    type: 'function';
+    function: {
+      name: string;
+      description: string;
+      parameters: {
+        type: 'object';
+        properties: Record<string, any>;
+        required: string[];
+      };
+    };
+  }>> {
+    const { activeServers, servers, getConnection } = useMCPServerStore.getState();
+    const tools: any[] = [];
+
+    for (const serverId of activeServers) {
+      const server = servers.find((s: MCPServer) => s.id === serverId);
+      if (!server) continue;
+
+      try {
+        // Use custom implementation only
+        const connection = getConnection(serverId);
+        if (connection) {
+          const serverTools = await connection.listTools();
+          
+          // Convert MCP tools to OpenAI function format
+          for (const tool of serverTools) {
+            tools.push({
+              type: 'function',
+              function: {
+                name: `${server.name}__${tool.name}`,
+                description: tool.description || `Tool ${tool.name} from ${server.name}`,
+                parameters: tool.inputSchema || {
+                  type: 'object',
+                  properties: {},
+                  required: []
+                }
+              }
+            });
+          }
         }
+      } catch (error) {
+        console.error(`Failed to get tools from server ${server.name}:`, error);
       }
     }
 
-    return availableTools;
+    return tools;
   }
 
   async executeTool(toolCall: MCPToolCall): Promise<MCPToolResult> {
+    const { servers, getConnection } = useMCPServerStore.getState();
+    
+    // Parse server name and tool name from function name
+    const [serverName, ...toolNameParts] = toolCall.function.name.split('__');
+    const toolName = toolNameParts.join('__');
+    
+    const server = servers.find((s: MCPServer) => s.name === serverName);
+    if (!server) {
+      return {
+        toolCallId: toolCall.id,
+        result: `Error: Server ${serverName} not found`,
+        error: `Server ${serverName} not found`
+      };
+    }
+
     try {
-      const { servers, getConnection } = useMCPServerStore.getState();
-      const functionName = toolCall.function.name;
-      
-      // Parse server name and tool name from function name
-      const parts = functionName.split('_');
-      if (parts.length < 2) {
-        throw new Error(`Invalid tool name format: ${functionName}`);
-      }
-      
-      const serverName = parts[0];
-      const toolName = parts.slice(1).join('_');
-      
-      // Find the server
-      const server = servers.find(s => s.name === serverName);
-      if (!server) {
-        throw new Error(`Server not found: ${serverName}`);
-      }
-      
-      // Get connection
+      // Use custom implementation only
       const connection = getConnection(server.id);
       if (!connection) {
-        throw new Error(`No connection to server: ${serverName}`);
+        return {
+          toolCallId: toolCall.id,
+          result: `Error: Could not connect to server ${serverName}`,
+          error: `Could not connect to server ${serverName}`
+        };
       }
-      
-      // Parse arguments
-      let args = {};
-      try {
-        args = JSON.parse(toolCall.function.arguments);
-      } catch (error) {
-        throw new Error(`Invalid arguments format: ${toolCall.function.arguments}`);
-      }
-      
-      // Execute tool
-      const result = await connection.callTool(toolName, args);
+
+      const result = await connection.callTool(toolName, toolCall.function.arguments || {});
       
       return {
         toolCallId: toolCall.id,
-        result,
+        result: JSON.stringify(result, null, 2)
       };
     } catch (error) {
-      console.error('Tool execution failed:', error);
+      console.error(`Error executing tool ${toolName} on ${serverName}:`, error);
       return {
         toolCallId: toolCall.id,
-        result: null,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        result: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        error: error instanceof Error ? error.message : 'Unknown error'
       };
     }
   }
 
-  async executeMultipleTools(toolCalls: MCPToolCall[]): Promise<MCPToolResult[]> {
+  async executeMultipleTools(toolCalls: MCPToolCall[]): Promise<ToolExecutionResult[]> {
     const results = await Promise.allSettled(
       toolCalls.map(toolCall => this.executeTool(toolCall))
-    );
+    ) as Array<{ 
+      status: string; 
+      value?: ToolExecutionResult; 
+      reason?: { message: string }; 
+    }>;
 
     return results.map((result, index) => {
-      if (result.status === 'fulfilled') {
+      if (result.status === 'fulfilled' && result.value) {
         return result.value;
       } else {
         return {
@@ -132,14 +151,14 @@ export class MCPToolHandler {
     });
   }
 
-  formatToolResultsForChat(results: MCPToolResult[]): string {
+  formatToolResultsForChat(results: ToolExecutionResult[]): string {
     return results.map(result => {
       if (result.error) {
         return `Tool ${result.toolCallId} failed: ${result.error}`;
       }
       
       let content = '';
-      if (result.result?.content) {
+      if (result.result && 'content' in result.result) {
         if (Array.isArray(result.result.content)) {
           content = result.result.content
             .map((item: any) => {

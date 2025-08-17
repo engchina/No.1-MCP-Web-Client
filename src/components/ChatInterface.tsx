@@ -76,11 +76,10 @@ const ChatInterface: React.FC = () => {
       }
 
       // Create assistant message placeholder
-       const assistantMessage = addMessage(currentSession.id, {
+       addMessage(currentSession.id, {
          role: 'assistant',
          content: '',
        });
-       const assistantMessageId = assistantMessage.id;
 
       // Prepare messages for API
       const messages = [
@@ -294,11 +293,10 @@ const ChatInterface: React.FC = () => {
       }
 
       // Create assistant message placeholder
-      const assistantMessage = addMessage(currentSession.id, {
+      addMessage(currentSession.id, {
         role: 'assistant',
         content: '',
       });
-      const assistantMessageId = assistantMessage.id;
 
       // Prepare messages for API (use messages up to the user message)
       const messages = currentSession.messages.slice(0, userMessageIndex + 1).slice(-10).map(msg => ({

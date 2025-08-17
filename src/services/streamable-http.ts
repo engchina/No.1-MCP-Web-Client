@@ -1,7 +1,7 @@
 import { MCPServer } from '../types';
 
 // Streamable HTTP connection types
-export type StreamableTransport = 'sse' | 'websocket';
+export type StreamableTransport = 'streamable-http';
 
 export interface StreamableHttpConfig {
   transport: StreamableTransport;
@@ -43,9 +43,10 @@ export abstract class StreamableHttpConnection {
   protected server: MCPServer;
   protected config: StreamableHttpConfig;
   protected isConnected: boolean = false;
+  protected requestId: number = 1;
+  protected sessionId?: string;
   protected messageHandlers: Map<string | number, (response: MCPResponse) => void> = new Map();
   protected notificationHandlers: Map<string, (params: any) => void> = new Map();
-  protected requestId: number = 1;
 
   constructor(server: MCPServer, config: StreamableHttpConfig) {
     this.server = server;
@@ -102,52 +103,68 @@ export abstract class StreamableHttpConnection {
   }
 }
 
-// Server-Sent Events implementation
-export class SSEConnection extends StreamableHttpConnection {
-  private eventSource?: EventSource;
-  private sendEndpoint: string;
+// Streamable HTTP implementation for MCP
+export class StreamableHTTPConnection extends StreamableHttpConnection {
+  private abortController?: AbortController;
 
   constructor(server: MCPServer, config: StreamableHttpConfig) {
     super(server, config);
-    this.sendEndpoint = config.endpoint.replace('/events', '/messages');
   }
 
   async connect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      try {
-        this.eventSource = new EventSource(this.config.endpoint);
+      this.abortController = new AbortController();
+      fetch(this.config.endpoint, {
+        method: 'POST',
+        mode: 'cors',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          ...this.config.headers,
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-03-26',
+            capabilities: {},
+            clientInfo: {
+              name: 'mcp-web-client',
+              version: '1.0.0'
+            }
+          },
+          id: 1
+        }),
+        signal: this.abortController.signal,
+      })
+      .then(async response => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        this.sessionId = response.headers.get('Mcp-Session-Id') || undefined;
+        if (!this.sessionId) {
+          throw new Error('Session ID not found in response headers');
+        }
 
-        this.eventSource.onopen = () => {
-          this.isConnected = true;
-          resolve();
-        };
+        const initialMessage: MCPMessage = await response.json();
+        this.handleMessage(initialMessage);
 
-        this.eventSource.onmessage = (event) => {
-          try {
-            const message: MCPMessage = JSON.parse(event.data);
-            this.handleMessage(message);
-          } catch (error) {
-            console.error('Failed to parse SSE message:', error);
-          }
-        };
-
-        this.eventSource.onerror = (error) => {
-          console.error('SSE connection error:', error);
-          this.isConnected = false;
-          if (this.eventSource?.readyState === EventSource.CLOSED) {
-            reject(new Error('SSE connection failed'));
-          }
-        };
-      } catch (error) {
-        reject(error);
-      }
+        this.isConnected = true;
+        resolve();
+      })
+      .catch(error => {
+        if ((error as any)?.name !== 'AbortError') {
+          reject(error);
+        }
+      });
     });
   }
 
   async disconnect(): Promise<void> {
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = undefined;
+    if (this.abortController) {
+      this.abortController.abort();
+      this.abortController = undefined;
     }
     this.isConnected = false;
   }
@@ -157,123 +174,182 @@ export class SSEConnection extends StreamableHttpConnection {
       throw new Error('Connection not established');
     }
 
-    const response = await fetch(this.sendEndpoint, {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      ...this.config.headers,
+    };
+
+    if (this.sessionId) {
+      headers['Mcp-Session-Id'] = this.sessionId;
+    }
+
+    const response = await fetch(this.config.endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...this.config.headers,
-      },
-      body: JSON.stringify(message),
+      mode: 'cors',
+      headers,
+      body: JSON.stringify(message)
     });
 
     if (!response.ok) {
       throw new Error(`Failed to send message: ${response.statusText}`);
     }
-  }
-}
 
-// WebSocket implementation
-export class WebSocketConnection extends StreamableHttpConnection {
-  private websocket?: WebSocket;
-  private reconnectAttempts: number = 0;
-
-  async connect(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      try {
-        const wsUrl = this.config.endpoint.replace(/^https?/, 'ws');
-        this.websocket = new WebSocket(wsUrl);
-
-        this.websocket.onopen = () => {
-          this.isConnected = true;
-          this.reconnectAttempts = 0;
-          resolve();
-        };
-
-        this.websocket.onmessage = (event) => {
-          try {
-            const message: MCPMessage = JSON.parse(event.data);
-            this.handleMessage(message);
-          } catch (error) {
-            console.error('Failed to parse WebSocket message:', error);
-          }
-        };
-
-        this.websocket.onclose = (event) => {
-          this.isConnected = false;
-          if (!event.wasClean && this.shouldReconnect()) {
-            this.attemptReconnect();
-          }
-        };
-
-        this.websocket.onerror = (error) => {
-          console.error('WebSocket connection error:', error);
-          reject(new Error('WebSocket connection failed'));
-        };
-      } catch (error) {
-        reject(error);
-      }
-    });
-  }
-
-  async disconnect(): Promise<void> {
-    if (this.websocket) {
-      this.websocket.close(1000, 'Normal closure');
-      this.websocket = undefined;
-    }
-    this.isConnected = false;
-  }
-
-  async send(message: MCPMessage): Promise<void> {
-    if (!this.isConnected || !this.websocket) {
-      throw new Error('Connection not established');
-    }
-
-    if (this.websocket.readyState === WebSocket.OPEN) {
-      this.websocket.send(JSON.stringify(message));
-    } else {
-      throw new Error('WebSocket is not ready');
-    }
-  }
-
-  private shouldReconnect(): boolean {
-    const maxAttempts = this.config.reconnectAttempts || 5;
-    return this.reconnectAttempts < maxAttempts;
-  }
-
-  private async attemptReconnect(): Promise<void> {
-    this.reconnectAttempts++;
-    const delay = (this.config.reconnectDelay || 1000) * Math.pow(2, this.reconnectAttempts - 1);
-    
-    console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.config.reconnectAttempts || 5}) in ${delay}ms`);
-    
-    setTimeout(() => {
-      this.connect().catch(error => {
-        console.error('Reconnection failed:', error);
-      });
-    }, delay);
+    const responseMessage: MCPMessage = await response.json();
+    this.handleMessage(responseMessage);
   }
 }
 
 // Factory function to create appropriate connection
 export function createStreamableConnection(
-  server: MCPServer,
-  transport: StreamableTransport = 'sse'
+  server: MCPServer
 ): StreamableHttpConnection {
   const config: StreamableHttpConfig = {
-    transport,
-    endpoint: server.url,
+    transport: 'streamable-http',
+    endpoint: '/mcp',
     headers: server.config?.headers,
-    reconnectAttempts: 5,
-    reconnectDelay: 1000,
   };
 
-  switch (transport) {
-    case 'sse':
-      return new SSEConnection(server, config);
-    case 'websocket':
-      return new WebSocketConnection(server, config);
-    default:
-      throw new Error(`Unsupported transport: ${transport}`);
+  return new StreamableHTTPConnection(server, config);
+}
+
+// MCP Connection Test Function following 2025-06-18 specification
+export async function testMCPConnection(): Promise<{ sessionId: string | null }> {
+  console.log('Starting MCP connection test following 2025-06-18 specification...');
+  
+  let sessionId: string | undefined;
+  
+  try {
+    // Step 1: POST /mcp - Initialize request
+    console.log('Step 1: Sending initialize request (POST /mcp)');
+    // Ensure correct endpoint without double /mcp
+    const endpoint = '/mcp';
+    const initResponse = await fetch(endpoint, {
+      method: 'POST',
+      mode: 'cors',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream, */*'
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-06-18',
+          capabilities: {
+            roots: { listChanged: true },
+            sampling: {}
+          },
+          clientInfo: {
+            name: 'mcp-web-client',
+            version: '1.0.0'
+          }
+        }
+      })
+    });
+    
+    if (!initResponse.ok) {
+      throw new Error(`Initialize failed: ${initResponse.status} ${initResponse.statusText}`);
+    }
+    
+    // Extract session ID from response headers
+    sessionId = initResponse.headers.get('Mcp-Session-Id') || undefined;
+    console.log('Initialize response received, session ID:', sessionId);
+    
+    // The initialize response body may be empty, so we don't parse it as JSON.
+    // We just need to check if the response was successful.
+    
+    // Step 2: GET /mcp - Establish SSE connection
+    console.log('Step 2: Establishing SSE connection (GET /mcp)');
+    const sseHeaders: Record<string, string> = {};
+    
+    if (sessionId) {
+      sseHeaders['Mcp-Session-Id'] = sessionId;
+    }
+    
+    const sseResponse = await fetch(endpoint, {
+      method: 'GET',
+      mode: 'cors',
+      headers: {
+        ...sseHeaders,
+        'Accept': 'application/json, text/event-stream, */*',
+      }
+    });
+    
+    if (!sseResponse.ok) {
+      throw new Error(`SSE connection failed: ${sseResponse.status} ${sseResponse.statusText}`);
+    }
+    
+    console.log('SSE connection established');
+    
+    // Wait a bit for the connection to be fully established before sending requests
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // Helper function for POST requests with session ID
+    const sendRequest = async (method: string, params?: any, id: number = Date.now()) => {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream, */*'
+      };
+      
+      if (sessionId) {
+        headers['Mcp-Session-Id'] = sessionId;
+      }
+      
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        mode: 'cors',
+        headers,
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id,
+          method,
+          params
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`${method} failed: ${response.status} ${response.statusText}`);
+      }
+      
+      // In a streamable HTTP connection, the response to a POST request
+      // is empty. The actual result will be sent as a notification
+      // over the SSE stream.
+      return;
+    };
+    
+    // Step 3: POST /mcp - ListToolsRequest
+    console.log('Step 3: Sending ListToolsRequest (POST /mcp)');
+    const toolsResult = await sendRequest('tools/list', {}, 2);
+    console.log('Tools list result:', toolsResult);
+    
+    // Step 4: POST /mcp - ListResourcesRequest
+    console.log('Step 4: Sending ListResourcesRequest (POST /mcp)');
+    const resourcesResult = await sendRequest('resources/list', {}, 3);
+    console.log('Resources list result:', resourcesResult);
+    
+    // Step 5: POST /mcp - ListResourceTemplatesRequest
+    console.log('Step 5: Sending ListResourceTemplatesRequest (POST /mcp)');
+    const templatesResult = await sendRequest('resources/templates/list', {}, 4);
+    console.log('Resource templates list result:', templatesResult);
+    
+    console.log('MCP connection test completed successfully!');
+    return { sessionId: sessionId || null };
+    
+  } catch (error) {
+    console.error('MCP connection test failed:', error);
+    
+    // Enhanced CORS error handling for test function
+    if (error instanceof Error) {
+      if (error.message.includes('CORS') || error.message.includes('Access-Control-Allow-Origin')) {
+        throw new Error(`CORS错误：无法连接到MCP服务器。请确保服务器已正确配置CORS策略，允许来自当前域的请求。`);
+      } else if (error.message.includes('Failed to fetch')) {
+        throw new Error(`网络错误：无法连接到MCP服务器。请检查服务器地址是否正确且服务器正在运行。`);
+      }
+    }
+    
+    throw error;
   }
 }
 
@@ -282,28 +358,15 @@ export class StreamableMCPServerService {
   private connection: StreamableHttpConnection;
   private server: MCPServer;
 
-  constructor(server: MCPServer, transport: StreamableTransport = 'sse') {
+  constructor(server: MCPServer) {
     this.server = server;
-    this.connection = createStreamableConnection(server, transport);
+    this.connection = createStreamableConnection(server);
   }
 
   async connect(): Promise<boolean> {
     try {
+      // The connection.connect() method now handles the initialize request
       await this.connection.connect();
-      
-      // Initialize MCP protocol
-      await this.connection.request('initialize', {
-        protocolVersion: '2024-11-05',
-        capabilities: {
-          roots: { listChanged: true },
-          sampling: {},
-        },
-        clientInfo: {
-          name: 'mcp-web-client',
-          version: '1.0.0',
-        },
-      });
-
       return true;
     } catch (error) {
       console.error('Failed to connect to MCP server:', error);

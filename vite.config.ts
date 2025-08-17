@@ -64,6 +64,12 @@ export default defineConfig({
   server: {
     port: 3000,
     host: true,
+    proxy: {
+      '/mcp': {
+        target: 'http://192.168.31.20:8000',
+        changeOrigin: true,
+      },
+    },
   },
   build: {
     outDir: 'dist',
