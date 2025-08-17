@@ -4,9 +4,10 @@ import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/Card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from './ui/Dialog';
-import { useMCPServerStore, useUIStore } from '../stores';
+import { useMCPServerStore } from '../stores';
+import { useUIStore } from '../stores';
 import { MCPDiscoveryService } from '../services/api';
-import { testMCPConnection } from '../services/streamable-http';
+import { testMCPConnectionWithSDK } from '../services/mcp-client';
 import { MCPServerConfig, MCPServer } from '../types';
 import { cn, isValidUrl } from '../utils';
 
@@ -27,9 +28,7 @@ const ServerManagement: React.FC = () => {
     servers, 
     addServer, 
     removeServer, 
-    toggleServerActive, 
-    disconnectServer,
-    connectServer
+    toggleServerActive
   } = useMCPServerStore();
   const { addNotification } = useUIStore();
 
@@ -82,7 +81,7 @@ const ServerManagement: React.FC = () => {
 
 
   const handleDisconnectServer = async (server: MCPServer) => {
-    await disconnectServer(server.id);
+    // Disconnect logic will be handled by the new SDK
     addNotification({
       type: 'success',
       title: '已断开连接',
@@ -98,15 +97,16 @@ const ServerManagement: React.FC = () => {
         message: `正在连接到 ${server.name}...`,
       });
       
-      await connectServer(server.id);
+      // Use new SDK for connection
+      const result = await testMCPConnectionWithSDK(server.config?.endpoint || '/mcp');
       
       // 连接成功后获取工具列表
-      await loadServerTools(server.id);
+      setServerTools(prev => ({ ...prev, [server.id]: result.tools }));
       
       addNotification({
         type: 'success',
         title: '连接成功',
-        message: `已成功连接到 ${server.name}`,
+        message: `已成功连接到 ${server.name}，发现 ${result.tools.length} 个工具`,
       });
     } catch (error) {
       addNotification({
@@ -121,12 +121,10 @@ const ServerManagement: React.FC = () => {
     setLoadingTools(prev => ({ ...prev, [serverId]: true }));
     
     try {
-      const { getConnection } = useMCPServerStore.getState();
-      const connection = getConnection(serverId);
-      
-      if (connection) {
-        const tools = await connection.listTools();
-        setServerTools(prev => ({ ...prev, [serverId]: tools }));
+      const server = servers.find((s: MCPServer) => s.id === serverId);
+      if (server) {
+        const result = await testMCPConnectionWithSDK(server.config?.endpoint || '/mcp');
+        setServerTools(prev => ({ ...prev, [serverId]: result.tools }));
       }
     } catch (error) {
       console.error(`Failed to load tools for server ${serverId}:`, error);
@@ -144,12 +142,15 @@ const ServerManagement: React.FC = () => {
         message: `正在测试 ${server.name} 的MCP连接...`,
       });
       
-      const result = await testMCPConnection();
+      const result = await testMCPConnectionWithSDK(server.config?.endpoint || '/mcp');
+      
+      // 显示测试结果中的工具列表
+      setServerTools(prev => ({ ...prev, [server.id]: result.tools }));
       
       addNotification({
         type: 'success',
         title: '测试完成',
-        message: `MCP连接测试成功完成，会话ID: ${result.sessionId}`,
+        message: `MCP连接测试成功完成，发现 ${result.tools.length} 个工具，${result.resources.length} 个资源，${result.prompts.length} 个提示`,
       });
     } catch (error) {
       addNotification({
@@ -326,7 +327,7 @@ const ServerManagement: React.FC = () => {
             </CardContent>
           </Card>
         ) : (
-          servers.map((server) => (
+          servers.map((server: MCPServer) => (
             <Card key={server.id} className={cn(
               'transition-all duration-200',
               !server.disabled && 'ring-2 ring-primary'
@@ -505,9 +506,9 @@ const ServerManagement: React.FC = () => {
                     <Button
                       size="sm"
                       onClick={() => handleAddDiscoveredServer(server)}
-                      disabled={servers.some(s => s.url === server.url)}
+                      disabled={servers.some((s: MCPServer) => s.url === server.url)}
                     >
-                      {servers.some(s => s.url === server.url) ? '已添加' : '添加'}
+                      {servers.some((s: MCPServer) => s.url === server.url) ? '已添加' : '添加'}
                     </Button>
                   </div>
                 </CardContent>

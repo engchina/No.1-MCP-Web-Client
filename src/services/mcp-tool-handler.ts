@@ -1,5 +1,9 @@
 import { useMCPServerStore } from '../stores';
+import { MCPClientService } from './mcp-client';
 import { MCPServer } from '../types';
+
+// Map to store active connections
+const connections = new Map<string, MCPClientService>();
 
 
 export interface MCPToolCall {
@@ -46,36 +50,41 @@ export class MCPToolHandler {
       };
     };
   }>> {
-    const { servers, getConnection } = useMCPServerStore.getState();
+    const { servers } = useMCPServerStore.getState();
     const tools: any[] = [];
 
     // 只处理启用的服务器（disabled为false或undefined）
-    const enabledServers = servers.filter(server => !server.disabled);
+    const enabledServers = servers.filter((server: MCPServer) => !server.disabled);
     
     for (const server of enabledServers) {
       if (!server) continue;
 
       try {
-        // Use custom implementation only
-        const connection = getConnection(server.id);
-        if (connection) {
-          const serverTools = await connection.listTools();
-          
-          // Convert MCP tools to OpenAI function format
-          for (const tool of serverTools) {
-            tools.push({
-              type: 'function',
-              function: {
-                name: `${server.name}__${tool.name}`,
-                description: tool.description || `Tool ${tool.name} from ${server.name}`,
-                parameters: tool.inputSchema || {
-                  type: 'object',
-                  properties: {},
-                  required: []
-                }
+        let connection = connections.get(server.id);
+        
+        if (!connection) {
+          // Create new connection using official SDK
+          connection = new MCPClientService(server);
+          await connection.connect();
+          connections.set(server.id, connection);
+        }
+        
+        const serverTools = await connection.listTools();
+        
+        // Convert MCP tools to OpenAI function format
+        for (const tool of serverTools) {
+          tools.push({
+            type: 'function',
+            function: {
+              name: `${server.name}__${tool.name}`,
+              description: tool.description || `Tool ${tool.name} from ${server.name}`,
+              parameters: tool.inputSchema || {
+                type: 'object',
+                properties: {},
+                required: []
               }
-            });
-          }
+            }
+          });
         }
       } catch (error) {
         console.error(`Failed to get tools from server ${server.name}:`, error);
@@ -86,7 +95,7 @@ export class MCPToolHandler {
   }
 
   async executeTool(toolCall: MCPToolCall): Promise<MCPToolResult> {
-    const { servers, getConnection } = useMCPServerStore.getState();
+    const { servers } = useMCPServerStore.getState();
     
     // Parse server name and tool name from function name
     const [serverName, ...toolNameParts] = toolCall.function.name.split('__');
@@ -102,14 +111,12 @@ export class MCPToolHandler {
     }
 
     try {
-      // Use custom implementation only
-      const connection = getConnection(server.id);
+      let connection = connections.get(server.id);
+      
       if (!connection) {
-        return {
-          toolCallId: toolCall.id,
-          result: `Error: Could not connect to server ${serverName}`,
-          error: `Could not connect to server ${serverName}`
-        };
+        connection = new MCPClientService(server);
+        await connection.connect();
+        connections.set(server.id, connection);
       }
 
       const result = await connection.callTool(toolName, toolCall.function.arguments || {});

@@ -11,6 +11,7 @@ export interface MCPServer {
   disabled?: boolean;
   config?: {
     headers?: Record<string, string>;
+    endpoint?: string;
   };
 }
 
