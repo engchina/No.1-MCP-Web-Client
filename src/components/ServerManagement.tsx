@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Server, Trash2, RefreshCw, Globe, Zap, Power, PowerOff } from 'lucide-react';
+import { Plus, Server, Trash2, RefreshCw, Globe, Zap, Power, PowerOff, Wrench } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/Card';
@@ -15,6 +15,8 @@ const ServerManagement: React.FC = () => {
   const [isDiscoveryDialogOpen, setIsDiscoveryDialogOpen] = useState(false);
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoveredServers, setDiscoveredServers] = useState<MCPServer[]>([]);
+  const [serverTools, setServerTools] = useState<Record<string, any[]>>({});
+  const [loadingTools, setLoadingTools] = useState<Record<string, boolean>>({});
   const [newServerConfig, setNewServerConfig] = useState<MCPServerConfig>({
     name: '',
     url: '',
@@ -23,13 +25,11 @@ const ServerManagement: React.FC = () => {
   
   const { 
     servers, 
-    activeServers, 
     addServer, 
     removeServer, 
     toggleServerActive, 
     disconnectServer,
-    connectServer,
-    getConnection
+    connectServer
   } = useMCPServerStore();
   const { addNotification } = useUIStore();
 
@@ -100,6 +100,9 @@ const ServerManagement: React.FC = () => {
       
       await connectServer(server.id);
       
+      // 连接成功后获取工具列表
+      await loadServerTools(server.id);
+      
       addNotification({
         type: 'success',
         title: '连接成功',
@@ -111,6 +114,25 @@ const ServerManagement: React.FC = () => {
         title: '连接失败',
         message: `连接到 ${server.name} 失败: ${error instanceof Error ? error.message : '未知错误'}`,
       });
+    }
+  };
+
+  const loadServerTools = async (serverId: string) => {
+    setLoadingTools(prev => ({ ...prev, [serverId]: true }));
+    
+    try {
+      const { getConnection } = useMCPServerStore.getState();
+      const connection = getConnection(serverId);
+      
+      if (connection) {
+        const tools = await connection.listTools();
+        setServerTools(prev => ({ ...prev, [serverId]: tools }));
+      }
+    } catch (error) {
+      console.error(`Failed to load tools for server ${serverId}:`, error);
+      setServerTools(prev => ({ ...prev, [serverId]: [] }));
+    } finally {
+      setLoadingTools(prev => ({ ...prev, [serverId]: false }));
     }
   };
 
@@ -307,7 +329,7 @@ const ServerManagement: React.FC = () => {
           servers.map((server) => (
             <Card key={server.id} className={cn(
               'transition-all duration-200',
-              activeServers.includes(server.id) && 'ring-2 ring-primary'
+              !server.disabled && 'ring-2 ring-primary'
             )}>
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -321,8 +343,8 @@ const ServerManagement: React.FC = () => {
                     )} />
                     <div>
                       <CardTitle className="text-lg">{server.name}</CardTitle>
-                      <CardDescription>
-                        {server.url} • {server.type}
+                      <CardDescription className="text-sm text-gray-600">
+                        {server.type} • {server.status}
                       </CardDescription>
                     </div>
                   </div>
@@ -337,12 +359,12 @@ const ServerManagement: React.FC = () => {
                       size="sm"
                       onClick={() => toggleServerActive(server.id)}
                     >
-                      {activeServers.includes(server.id) ? (
+                      {!server.disabled ? (
                         <Zap className="h-4 w-4 mr-1 text-yellow-500" />
                       ) : (
                         <Zap className="h-4 w-4 mr-1" />
                       )}
-                      {activeServers.includes(server.id) ? '停用' : '启用'}
+                      {!server.disabled ? '停用' : '启用'}
                     </Button>
                     
                     {server.status === 'connected' ? (
@@ -380,12 +402,20 @@ const ServerManagement: React.FC = () => {
                     </Button>
                     
                     {server.status === 'connected' && (
-                      <div className="flex items-center text-xs text-muted-foreground">
-                        <div className="w-2 h-2 bg-green-500 rounded-full mr-1 animate-pulse"></div>
-                        {getConnection(server.id)?.serverInfo.type === 'streamable-http' ? 'Streamable' : 'HTTP'}
-                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => loadServerTools(server.id)}
+                        disabled={loadingTools[server.id]}
+                      >
+                        {loadingTools[server.id] ? (
+                          <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                        ) : (
+                          <Wrench className="h-4 w-4 mr-1" />
+                        )}
+                        {loadingTools[server.id] ? '加载中...' : '刷新工具'}
+                      </Button>
                     )}
-                    
                     <Button
                       variant="outline"
                       size="sm"
@@ -398,15 +428,49 @@ const ServerManagement: React.FC = () => {
                 </div>
               </CardHeader>
               
-              {server.description && (
+              {(server.description || (server.status === 'connected' && serverTools[server.id])) && (
                 <CardContent>
-                  <p className="text-sm text-muted-foreground">{server.description}</p>
+                  {server.description && (
+                    <p className="text-sm text-muted-foreground">{server.description}</p>
+                  )}
                   {server.capabilities && server.capabilities.length > 0 && (
                     <div className="mt-2">
                       <span className="text-sm font-medium">功能: </span>
                       <span className="text-sm text-muted-foreground">
                         {server.capabilities.join(', ')}
                       </span>
+                    </div>
+                  )}
+                  
+                  {/* 显示可用工具 */}
+                  {server.status === 'connected' && (
+                    <div className="mt-4">
+                      <div className="flex items-center space-x-2 mb-2">
+                        <Wrench className="h-4 w-4" />
+                        <span className="text-sm font-medium">可用工具:</span>
+                        {loadingTools[server.id] && (
+                          <RefreshCw className="h-3 w-3 animate-spin" />
+                        )}
+                      </div>
+                      
+                      {loadingTools[server.id] ? (
+                        <p className="text-sm text-muted-foreground">加载工具列表中...</p>
+                      ) : serverTools[server.id] && serverTools[server.id].length > 0 ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {serverTools[server.id].map((tool, index) => (
+                            <div key={index} className="p-2 bg-gray-50 rounded border">
+                              <div className="font-medium text-sm">{tool.name}</div>
+                              {tool.description && (
+                                <div className="text-xs text-muted-foreground mt-1">
+                                  {tool.description}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">暂无可用工具</p>
+                      )}
                     </div>
                   )}
                 </CardContent>

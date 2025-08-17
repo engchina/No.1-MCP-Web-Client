@@ -29,7 +29,7 @@ const ChatInterface: React.FC = () => {
     currentSessionId 
   } = useChatStore();
   const { settings } = useSettingsStore();
-  const { servers, activeServers } = useMCPServerStore();
+  const { servers = [] } = useMCPServerStore();
   
   const currentSession = getCurrentSession();
 
@@ -550,12 +550,9 @@ const ChatInterface: React.FC = () => {
         </div>
         
         {/* Active MCP Servers Indicator */}
-        {activeServers.length > 0 && (
+        {servers && servers.filter(s => !s.disabled).length > 0 && (
           <div className="mt-2 text-xs text-muted-foreground">
-            活跃的MCP服务器: {activeServers.map(serverId => {
-              const server = servers.find(s => s.id === serverId);
-              return server?.name;
-            }).filter(Boolean).join(', ')}
+            活跃的MCP服务器: {servers.filter(s => !s.disabled).map(server => server.name).join(', ')}
           </div>
         )}
       </div>

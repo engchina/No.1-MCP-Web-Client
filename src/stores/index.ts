@@ -2,13 +2,12 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { MCPServer, ChatSession, ChatMessage, LLMProvider, UIState, AppSettings, Notification } from '../types';
-import { generateId, fileService } from '../utils';
+import { generateId } from '../utils';
 import { StreamableMCPServerService, StreamableTransport } from '../services/streamable-http';
 
 // MCP Servers Store
 interface MCPServerStore {
   servers: MCPServer[];
-  activeServers: string[];
   connections: Map<string, StreamableMCPServerService>;
   addServer: (server: Omit<MCPServer, 'id' | 'status'>) => void;
   updateServer: (id: string, updates: Partial<MCPServer>) => void;
@@ -23,7 +22,6 @@ interface MCPServerStore {
 export const useMCPServerStore = create<MCPServerStore>()(persist(
   (set, get) => ({
     servers: [],
-    activeServers: [],
     connections: new Map(),
     
     addServer: (server) => {
@@ -31,61 +29,36 @@ export const useMCPServerStore = create<MCPServerStore>()(persist(
         ...server,
         id: generateId(),
         status: 'disconnected',
+        disabled: false,
       };
-      set((state) => {
-        const servers = [...state.servers, newServer];
-        // Persist to JSON file
-        const json = {
-          mcpServers: servers.reduce((acc, s) => {
-            acc[s.name] = { type: s.type, url: s.url };
-            return acc;
-          }, {} as Record<string, { type: 'streamable-http' | 'sse'; url: string }>)
-        };
-        fileService.saveMCPServers(json);
-        return { servers };
-      });
+      set((state) => ({
+        servers: [...state.servers, newServer],
+      }));
     },
     
     updateServer: (id, updates) => {
-      set((state) => {
-        const servers = state.servers.map((server) =>
+      set((state) => ({
+        servers: state.servers.map((server) =>
           server.id === id ? { ...server, ...updates } : server
-        );
-        const json = {
-          mcpServers: servers.reduce((acc, s) => {
-            acc[s.name] = { type: s.type, url: s.url };
-            return acc;
-          }, {} as Record<string, { type: 'streamable-http' | 'sse'; url: string }>)
-        };
-        fileService.saveMCPServers(json);
-        return { servers };
-      });
+        ),
+      }));
     },
     
     removeServer: (id) => {
-      set((state) => {
-        const servers = state.servers.filter((server) => server.id !== id);
-        const json = {
-          mcpServers: servers.reduce((acc, s) => {
-            acc[s.name] = { type: s.type, url: s.url };
-            return acc;
-          }, {} as Record<string, { type: 'streamable-http' | 'sse'; url: string }>)
-        };
-        fileService.saveMCPServers(json);
-        return {
-          servers,
-          activeServers: state.activeServers.filter((serverId) => serverId !== id),
-        };
-      });
+      set((state) => ({
+        servers: state.servers.filter((server) => server.id !== id),
+      }));
     },
     
     toggleServerActive: (id) => {
       set((state) => {
-        const isActive = state.activeServers.includes(id);
+        const server = state.servers.find(s => s.id === id);
+        const isCurrentlyDisabled = server?.disabled || false;
+        
         return {
-          activeServers: isActive
-            ? state.activeServers.filter((serverId) => serverId !== id)
-            : [...state.activeServers, id],
+          servers: state.servers.map((server) =>
+            server.id === id ? { ...server, disabled: !isCurrentlyDisabled } : server
+          ),
         };
       });
     },
@@ -152,24 +125,16 @@ export const useMCPServerStore = create<MCPServerStore>()(persist(
   }),
   {
     name: 'mcp-servers',
-    // Disable default localStorage persist, we'll manage persistence manually via fileService
-    skipHydration: true,
-    partialize: (state) => ({ servers: state.servers, activeServers: state.activeServers }),
+    partialize: (state) => ({ servers: state.servers }),
     onRehydrateStorage: () => (state) => {
-      // Load from JSON file on hydration
-      fileService.loadMCPServers().then((config) => {
-        if (config && state) {
-          const servers: MCPServer[] = Object.entries(config.mcpServers || {}).map(([name, conf]) => ({
-            id: generateId(),
-            name,
-            url: (conf as any).url || (conf as any).serverUrl || '',
-            type: (conf as any).type === 'sse' ? 'sse' : 'streamable-http',
-            status: 'disconnected',
-          }));
-          state.servers = servers;
+      if (state) {
+        // 确保connections字段始终是Map实例
+        if (!(state.connections instanceof Map)) {
+          state.connections = new Map();
         }
-      }).catch((e) => console.warn('Failed to load MCP servers config:', e));
-    }
+      }
+      return state;
+    },
   }
 ));
 

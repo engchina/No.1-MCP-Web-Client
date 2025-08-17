@@ -106,6 +106,7 @@ export abstract class StreamableHttpConnection {
 // Streamable HTTP implementation for MCP
 export class StreamableHTTPConnection extends StreamableHttpConnection {
   private abortController?: AbortController;
+  private eventSource?: EventSource;
 
   constructor(server: MCPServer, config: StreamableHttpConfig) {
     super(server, config);
@@ -114,6 +115,8 @@ export class StreamableHTTPConnection extends StreamableHttpConnection {
   async connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       this.abortController = new AbortController();
+      
+      // Step 1: Send initialize request
       fetch(this.config.endpoint, {
         method: 'POST',
         mode: 'cors',
@@ -145,8 +148,8 @@ export class StreamableHTTPConnection extends StreamableHttpConnection {
         this.sessionId = response.headers.get('Mcp-Session-Id') || undefined;
         console.log('Initialize response received, session ID:', this.sessionId);
         
-        // The initialize response body may be empty, so we don't parse it as JSON.
-        // We just need to check if the response was successful.
+        // Step 2: Establish SSE connection to receive responses
+        this.setupSSEConnection();
         
         this.isConnected = true;
         resolve();
@@ -159,11 +162,43 @@ export class StreamableHTTPConnection extends StreamableHttpConnection {
     });
   }
 
+  private setupSSEConnection(): void {
+    const sseUrl = new URL(this.config.endpoint);
+    if (this.sessionId) {
+      sseUrl.searchParams.set('session', this.sessionId);
+    }
+
+    this.eventSource = new EventSource(sseUrl.toString());
+    
+    this.eventSource.onmessage = (event) => {
+      try {
+        const message: MCPMessage = JSON.parse(event.data);
+        this.handleMessage(message);
+      } catch (error) {
+        console.error('Failed to parse SSE message:', error);
+      }
+    };
+
+    this.eventSource.onerror = (error) => {
+      console.error('SSE connection error:', error);
+    };
+
+    this.eventSource.onopen = () => {
+      console.log('SSE connection established');
+    };
+  }
+
   async disconnect(): Promise<void> {
     if (this.abortController) {
       this.abortController.abort();
       this.abortController = undefined;
     }
+    
+    if (this.eventSource) {
+      this.eventSource.close();
+      this.eventSource = undefined;
+    }
+    
     this.isConnected = false;
   }
 
@@ -193,8 +228,9 @@ export class StreamableHTTPConnection extends StreamableHttpConnection {
       throw new Error(`Failed to send message: ${response.statusText}`);
     }
 
-    const responseMessage: MCPMessage = await response.json();
-    this.handleMessage(responseMessage);
+    // In streamable HTTP, POST requests return empty responses
+    // The actual result will be sent as a notification over the SSE stream
+    // So we don't try to parse the response as JSON
   }
 }
 

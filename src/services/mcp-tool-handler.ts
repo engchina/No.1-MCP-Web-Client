@@ -27,15 +27,12 @@ export type ToolExecutionResult = {
 export class MCPToolHandler {
   private static instance: MCPToolHandler;
 
-  
   static getInstance(): MCPToolHandler {
     if (!MCPToolHandler.instance) {
       MCPToolHandler.instance = new MCPToolHandler();
     }
     return MCPToolHandler.instance;
   }
-
-
 
   async getAvailableTools(): Promise<Array<{
     type: 'function';
@@ -49,16 +46,18 @@ export class MCPToolHandler {
       };
     };
   }>> {
-    const { activeServers, servers, getConnection } = useMCPServerStore.getState();
+    const { servers, getConnection } = useMCPServerStore.getState();
     const tools: any[] = [];
 
-    for (const serverId of activeServers) {
-      const server = servers.find((s: MCPServer) => s.id === serverId);
+    // 只处理启用的服务器（disabled为false或undefined）
+    const enabledServers = servers.filter(server => !server.disabled);
+    
+    for (const server of enabledServers) {
       if (!server) continue;
 
       try {
         // Use custom implementation only
-        const connection = getConnection(serverId);
+        const connection = getConnection(server.id);
         if (connection) {
           const serverTools = await connection.listTools();
           

@@ -8,6 +8,7 @@ export interface MCPServer {
   description?: string;
   capabilities?: string[];
   lastConnected?: Date;
+  disabled?: boolean;
   config?: {
     headers?: Record<string, string>;
   };
