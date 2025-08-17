@@ -1,4 +1,3 @@
-import { StreamableMCPServerService } from './streamable-http';
 import { useMCPServerStore } from '../stores';
 
 export interface MCPToolCall {

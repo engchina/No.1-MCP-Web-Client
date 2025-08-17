@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Server, Trash2, Settings, RefreshCw, Globe, Zap, Power, PowerOff, Wifi, Radio } from 'lucide-react';
+import React, { useState } from 'react';
+import { Plus, Server, Trash2, RefreshCw, Globe, Zap, Power, PowerOff, Wifi, Radio } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/Card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from './ui/Dialog';
 import { useMCPServerStore, useUIStore } from '../stores';
-import { MCPServerService, MCPDiscoveryService } from '../services/api';
+import { MCPDiscoveryService } from '../services/api';
 import { StreamableTransport } from '../services/streamable-http';
 import { MCPServerConfig, MCPServer } from '../types';
 import { cn, isValidUrl } from '../utils';
@@ -28,7 +28,6 @@ const ServerManagement: React.FC = () => {
     addServer, 
     removeServer, 
     toggleServerActive, 
-    setServerStatus,
     connectServer,
     disconnectServer,
     getConnection

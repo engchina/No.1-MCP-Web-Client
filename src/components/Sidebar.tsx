@@ -27,7 +27,7 @@ const Sidebar: React.FC = () => {
   ];
 
   const handleCreateNewChat = () => {
-    const sessionId = createSession();
+    createSession();
     setActiveTab('chat');
   };
 

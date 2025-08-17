@@ -119,4 +119,5 @@ export interface AppSettings {
   openaiApiKey?: string;
   openaiModelName?: string;
   ocigenaiModelName?: string;
+  llmProviders: LLMProvider[];
 }

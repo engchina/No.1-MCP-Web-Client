@@ -146,8 +146,9 @@ interface ChatStore {
   createSession: (title?: string) => string;
   deleteSession: (id: string) => void;
   setCurrentSession: (id: string) => void;
-  addMessage: (sessionId: string, message: Omit<ChatMessage, 'id' | 'timestamp'>) => void;
+  addMessage: (sessionId: string, message: Omit<ChatMessage, 'id' | 'timestamp'>) => ChatMessage;
   updateMessage: (sessionId: string, messageId: string, updates: Partial<ChatMessage>) => void;
+  removeMessagesFromIndex: (sessionId: string, fromIndex: number) => void;
   clearSession: (sessionId: string) => void;
   setStreaming: (streaming: boolean) => void;
   getCurrentSession: () => ChatSession | null;
@@ -217,6 +218,8 @@ export const useChatStore = create<ChatStore>()(persist(
             : session
         ),
       }));
+
+      return newMessage;
     },
     
     updateMessage: (sessionId, messageId, updates) => {
@@ -228,6 +231,20 @@ export const useChatStore = create<ChatStore>()(persist(
                 messages: session.messages.map((message) =>
                   message.id === messageId ? { ...message, ...updates } : message
                 ),
+                updatedAt: new Date(),
+              }
+            : session
+        ),
+      }));
+    },
+    
+    removeMessagesFromIndex: (sessionId, fromIndex) => {
+      set((state) => ({
+        sessions: state.sessions.map((session) =>
+          session.id === sessionId
+            ? {
+                ...session,
+                messages: session.messages.slice(0, fromIndex),
                 updatedAt: new Date(),
               }
             : session
@@ -269,17 +286,17 @@ interface SettingsStore {
 }
 
 const defaultSettings: AppSettings = {
-  maxTokens: 64000,
+  maxTokens: 4096,
   temperature: 0.7,
   streamResponse: true,
   autoSave: true,
   theme: 'system',
-  // Provider type selection defaults
   providerType: 'openai',
   openaiBaseUrl: 'https://api.openai.com/v1',
   openaiApiKey: '',
-  openaiModelName: 'gpt-4o',
-  ocigenaiModelName: 'meta.llama-4-scout-17b-16e-instruct',
+  openaiModelName: 'gpt-3.5-turbo',
+  ocigenaiModelName: 'meta.llama-3.1-405b-instruct',
+  llmProviders: [],
 };
 
 export const useSettingsStore = create<SettingsStore>()(persist(
